@@ -16,7 +16,6 @@
       --tile-bg: #ffffff;
       --tile-hover: #eef6fa;
       --tile-selected: #d9edf7;
-      --tile-correct: #dff3d8;
       --shadow: 0 8px 24px rgba(0, 56, 79, 0.08);
       --radius: 16px;
     }
@@ -129,6 +128,11 @@
       border: 1px solid var(--border);
     }
 
+    .btn-reveal {
+      background: var(--chs-green);
+      color: #fff;
+    }
+
     .board {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -172,10 +176,6 @@
       animation: shake 0.28s ease-in-out;
     }
 
-    .tile.correct-hidden {
-      display: none;
-    }
-
     @keyframes shake {
       0%, 100% { transform: translateX(0); }
       20% { transform: translateX(-4px); }
@@ -188,6 +188,7 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+      margin-bottom: 18px;
     }
 
     .group {
@@ -277,7 +278,7 @@
 
       button {
         width: 100%;
-        max-width: 220px;
+        max-width: 240px;
       }
 
       .controls {
@@ -309,6 +310,7 @@
         <button class="btn-secondary" id="shuffleBtn">Shuffle</button>
         <button class="btn-outline" id="deselectBtn">Deselect All</button>
         <button class="btn-primary" id="submitBtn">Submit</button>
+        <button class="btn-reveal" id="revealBtn">Reveal Answers</button>
       </div>
 
       <div id="solvedGroups" class="solved-groups"></div>
@@ -352,12 +354,14 @@
     const shuffleBtn = document.getElementById("shuffleBtn");
     const deselectBtn = document.getElementById("deselectBtn");
     const submitBtn = document.getElementById("submitBtn");
+    const revealBtn = document.getElementById("revealBtn");
 
     let mistakesRemaining = 4;
     let selected = [];
     let solvedCategoryNames = [];
+    let gameOver = false;
 
-    let allTiles = categories.flatMap(category =>
+    const allTiles = categories.flatMap(category =>
       category.terms.map(term => ({
         term,
         category: category.name
@@ -386,13 +390,18 @@
         const tileEl = document.createElement("button");
         tileEl.className = "tile";
         tileEl.textContent = tile.term;
-        tileEl.setAttribute("type", "button");
+        tileEl.type = "button";
 
         if (selected.includes(tile.term)) {
           tileEl.classList.add("selected");
         }
 
-        tileEl.addEventListener("click", () => toggleSelection(tile.term));
+        if (!gameOver) {
+          tileEl.addEventListener("click", () => toggleSelection(tile.term));
+        } else {
+          tileEl.style.cursor = "default";
+        }
+
         boardEl.appendChild(tileEl);
       });
     }
@@ -414,22 +423,31 @@
     }
 
     function toggleSelection(term) {
+      if (gameOver) return;
+
       if (selected.includes(term)) {
         selected = selected.filter(item => item !== term);
       } else {
         if (selected.length < 4) {
           selected.push(term);
+          messageEl.textContent = "";
         } else {
           messageEl.textContent = "You can only select 4 terms at a time.";
         }
       }
+
       renderBoard();
     }
 
     function deselectAll() {
+      if (gameOver) return;
       selected = [];
       messageEl.textContent = "";
       renderBoard();
+    }
+
+    function arraysMatch(a, b) {
+      return [...a].sort().join("|") === [...b].sort().join("|");
     }
 
     function flashIncorrectSelection() {
@@ -442,11 +460,32 @@
       });
     }
 
-    function arraysMatch(a, b) {
-      return [...a].sort().join("|") === [...b].sort().join("|");
+    function findOneAwayCategory() {
+      for (const category of categories) {
+        if (solvedCategoryNames.includes(category.name)) continue;
+
+        const overlap = selected.filter(term => category.terms.includes(term)).length;
+        if (overlap === 3) {
+          return category;
+        }
+      }
+      return null;
+    }
+
+    function endGame(finalMessage) {
+      gameOver = true;
+      submitBtn.disabled = true;
+      shuffleBtn.disabled = true;
+      deselectBtn.disabled = true;
+      submitBtn.style.opacity = "0.6";
+      shuffleBtn.style.opacity = "0.6";
+      deselectBtn.style.opacity = "0.6";
+      messageEl.textContent = finalMessage;
     }
 
     function submitSelection() {
+      if (gameOver) return;
+
       if (selected.length !== 4) {
         messageEl.textContent = "Select exactly 4 terms.";
         return;
@@ -460,46 +499,49 @@
       if (matchedCategory) {
         solvedCategoryNames.push(matchedCategory.name);
         selected = [];
-        messageEl.textContent = `Correct: ${matchedCategory.name}`;
         renderSolvedGroups();
         renderBoard();
 
         if (solvedCategoryNames.length === categories.length) {
-          messageEl.textContent = "Excellent work! You solved all four categories.";
-          submitBtn.disabled = true;
-          shuffleBtn.disabled = true;
-          deselectBtn.disabled = true;
-          submitBtn.style.opacity = "0.6";
-          shuffleBtn.style.opacity = "0.6";
-          deselectBtn.style.opacity = "0.6";
+          endGame("Excellent work! You solved all four categories.");
+        } else {
+          messageEl.textContent = `Correct: ${matchedCategory.name}`;
         }
       } else {
+        const oneAway = findOneAwayCategory();
         mistakesRemaining--;
         mistakesEl.textContent = mistakesRemaining;
-        messageEl.textContent = "Not quite. Try again.";
         flashIncorrectSelection();
 
         if (mistakesRemaining <= 0) {
-          revealAll();
-          messageEl.textContent = "Game over. The categories have been revealed.";
-          submitBtn.disabled = true;
-          shuffleBtn.disabled = true;
-          deselectBtn.disabled = true;
-          submitBtn.style.opacity = "0.6";
-          shuffleBtn.style.opacity = "0.6";
-          deselectBtn.style.opacity = "0.6";
+          revealAnswers(false);
+          return;
+        }
+
+        if (oneAway) {
+          messageEl.textContent = "One away...";
+        } else {
+          messageEl.textContent = "Not quite. Try again.";
         }
       }
     }
 
-    function revealAll() {
+    function revealAnswers(manualReveal = true) {
       solvedCategoryNames = categories.map(category => category.name);
       selected = [];
       renderSolvedGroups();
       renderBoard();
+
+      if (manualReveal) {
+        endGame("Answers revealed.");
+      } else {
+        endGame("Game over. The answers have been revealed.");
+      }
     }
 
     function shuffleBoard() {
+      if (gameOver) return;
+
       const unsolved = currentTiles.filter(tile => !solvedCategoryNames.includes(tile.category));
       const solved = currentTiles.filter(tile => solvedCategoryNames.includes(tile.category));
       currentTiles = [...solved, ...shuffle(unsolved)];
@@ -509,6 +551,7 @@
     shuffleBtn.addEventListener("click", shuffleBoard);
     deselectBtn.addEventListener("click", deselectAll);
     submitBtn.addEventListener("click", submitSelection);
+    revealBtn.addEventListener("click", () => revealAnswers(true));
 
     renderSolvedGroups();
     renderBoard();
